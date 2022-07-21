@@ -1,0 +1,344 @@
+name: tdlib-build
+
+on:
+  push:
+    paths:
+      - '.github/workflows/td-version.json'
+      - '.github/workflows/build-tdlib.yml'
+
+jobs:
+  build-android:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: JSON to variables
+        uses: rgarcia-phi/json-to-variables@v1.1.0
+        with:
+          filename: '.github/workflows/td-version.json'
+          prefix: td
+
+      - name: setup
+        run: |
+          sudo apt-get install -y make git zlib1g-dev libssl-dev gperf cmake clang libc++-dev libc++abi-dev ninja-build
+
+      - name: download ndk
+        run: |
+          mkdir /opt/android-ndk-tmp
+          cd /opt/android-ndk-tmp
+          wget -q https://dl.google.com/android/repository/android-ndk-r20-linux-x86_64.zip
+          unzip -q android-ndk-r20-linux-x86_64.zip
+          mv ./android-ndk-r20 /opt/android-ndk
+          cd /opt/android-ndk
+          rm -rf /opt/android-ndk-tmp
+          export PATH=$PATH:/opt/android-ndk
+
+      - name: clone
+        run: |
+          git clone https://github.com/tdlib/td.git
+          cd td
+          git checkout ${{ env.td_commit_hash }}
+          git show --summary
+
+      - name: setup td
+        run: |
+          cd td/example
+          curl https://github.com/tdlib/td/files/4746919/libtdjsonandroid.zip -o libtdjsonandroid.zip -L
+          unzip -o libtdjsonandroid.zip
+          mv libtdjsonandroid/* .
+          rmdir libtdjsonandroid
+          rm libtdjsonandroid.zip
+          chmod +x build.sh
+          chmod +x export.sh
+          chmod +x build-all.sh
+          chmod +x third_party/crypto/build.sh
+          chmod +x third_party/crypto/build-all.sh
+          sed -i '3s/.*/set(TD_DIR ${CMAKE_CURRENT_SOURCE_DIR}\/..)/' CMakeLists.txt
+          curl https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_1_1g.tar.gz -o third_party/crypto/openssl-OpenSSL_1_1_1g.tar.gz -L
+          sed -i '5s/.*/cmake .. -DCMAKE_TOOLCHAIN_FILE=\/opt\/android-ndk\/build\/cmake\/android.toolchain.cmake -DCMAKE_BUILD_TYPE=MinSizeRel -GNinja -DANDROID_ABI=${ABI} || exit 1/' build.sh
+          sed -i '1s/.*/#!\/bin\/bash/' third_party/crypto/build.sh
+          sed -i '21s/.*/HOST_ARCH=linux-x86_64/' third_party/crypto/build.sh
+          sed -i '20s/.*/export ANDROID_NDK=\/opt\/android-ndk/' third_party/crypto/build.sh
+
+      - name: build ssl
+        run: |
+          export ANDROID_NDK_HOME=/opt/android-ndk
+          export ANDROID_NDK_ROOT=/opt/android-ndk
+          cd td/example/third_party/crypto
+          ./build-all.sh
+
+      - name: build
+        run: |
+          cd td/example
+          ./export.sh
+
+#      - name: fake build
+#        run: |
+#          mkdir -p td/example/libs
+#          mkdir -p td/example/libs/arm64-v8a
+#          mkdir -p td/example/libs/armeabi-v7a
+#          mkdir -p td/example/libs/x86
+#          mkdir -p td/example/libs/x86_64
+#          echo arm64-v8a > td/example/libs/arm64-v8a/libtdjsonandroid.so
+#          echo arm64-v8a > td/example/libs/arm64-v8a/libtdjsonandroid.so.debug
+#          echo armeabi-v7a > td/example/libs/armeabi-v7a/libtdjsonandroid.so
+#          echo armeabi-v7a > td/example/libs/armeabi-v7a/libtdjsonandroid.so.debug
+#          echo x86 > td/example/libs/x86/libtdjsonandroid.so
+#          echo x86 > td/example/libs/x86/libtdjsonandroid.so.debug
+#          echo x86_64 > td/example/libs/x86_64/libtdjsonandroid.so
+#          echo x86_64 > td/example/libs/x86_64/libtdjsonandroid.so.debug
+
+      - name: zip
+        run: |
+          cd td/example/libs
+          zip libs.zip arm64-v8a/libtdjsonandroid.so armeabi-v7a/libtdjsonandroid.so x86/libtdjsonandroid.so x86_64/libtdjsonandroid.so
+
+      - name: Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: android-${{ env.td_version }}-${{ env.td_commit_hash }}
+          name: Android ${{ env.td_version }}-${{ env.td_commit_hash }}
+          body: https://github.com/tdlib/td/tree/${{ env.td_commit_hash }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: 'td/example/libs/libs.zip'
+
+  build-macos-intel:
+    runs-on: macos-11
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: JSON to variables
+        uses: rgarcia-phi/json-to-variables@v1.1.0
+        with:
+          filename: '.github/workflows/td-version.json'
+          prefix: td
+
+      - name: setup
+        run: |
+          brew install gperf cmake coreutils
+
+      - name: clone
+        run: |
+          git clone https://github.com/tdlib/td.git
+          cd td
+          git checkout ${{ env.td_commit_hash }}
+          git show --summary
+
+      - name: setup td
+        run: |
+          cd td/example/ios
+          sed -i '.bak' '11s/.*/platforms="macOS"/' build-openssl.sh
+          sed -i '.bak' '24s/.*/platforms="macOS"/' build.sh
+
+      - name: build ssl
+        run: |
+          cd td/example/ios
+          ./build-openssl.sh
+
+      - name: build
+        run: |
+          cd td/example/ios
+          ./build.sh
+
+#      - name: fake build
+#        run: |
+#          mkdir -p td/example/ios/tdjson/macOS/lib/
+#          cd td/example/ios/tdjson/macOS/lib/
+#          echo "libtdjson" > libtdjson.dylib
+
+      - name: zip
+        run: |
+          cd td/example/ios/tdjson/macOS/lib/
+          zip libtdjson.zip libtdjson.dylib
+
+      - name: Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: macos-intel-${{ env.td_version }}-${{ env.td_commit_hash }}
+          name: MacOS Intel ${{ env.td_version }}-${{ env.td_commit_hash }}
+          body: https://github.com/tdlib/td/tree/${{ env.td_commit_hash }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: 'td/example/ios/tdjson/macOS/lib/libtdjson.zip'
+
+  build-ios:
+    runs-on: macos-11
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: JSON to variables
+        uses: rgarcia-phi/json-to-variables@v1.1.0
+        with:
+          filename: '.github/workflows/td-version.json'
+          prefix: td
+
+      - name: setup
+        run: |
+          brew install gperf cmake coreutils
+
+      - name: clone
+        run: |
+          git clone https://github.com/tdlib/td.git
+          cd td
+          git checkout ${{ env.td_commit_hash }}
+          git show --summary
+
+      - name: setup td
+        run: |
+          cd td
+          mkdir native-build
+          cd native-build
+          cmake ..
+          cmake --build . --target prepare_cross_compiling
+          cd ../example/ios
+          sed -i '.bak' '11s/.*/platforms="iOS"/' build-openssl.sh
+          sed -i '.bak' '24s/.*/platforms="iOS"/' build.sh
+
+      - name: build ssl
+        run: |
+          cd td/example/ios
+          ./build-openssl.sh
+
+      - name: build
+        run: |
+          cd td/example/ios
+          ./build.sh
+
+#      - name: fake build
+#        run: |
+#          mkdir -p td/example/ios/tdjson/iOS/lib/
+#          cd td/example/ios/tdjson/iOS/lib/
+#          echo "libtdjson" > libtdjson.dylib
+
+      - name: zip
+        run: |
+          cd td/example/ios/tdjson/iOS/lib/
+          zip libtdjson.zip libtdjson.dylib
+
+      - name: Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ios-${{ env.td_version }}-${{ env.td_commit_hash }}
+          name: iOS ${{ env.td_version }}-${{ env.td_commit_hash }}
+          body: https://github.com/tdlib/td/tree/${{ env.td_commit_hash }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: 'td/example/ios/tdjson/iOS/lib/libtdjson.zip'
+
+  build-linux-x64:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: JSON to variables
+        uses: rgarcia-phi/json-to-variables@v1.1.0
+        with:
+          filename: '.github/workflows/td-version.json'
+          prefix: td
+
+      - name: setup
+        run: |
+          sudo apt-get install make git zlib1g-dev libssl-dev gperf php-cli cmake g++
+
+      - name: clone
+        run: |
+          git clone https://github.com/tdlib/td.git
+          cd td
+          git checkout ${{ env.td_commit_hash }}
+          git show --summary
+
+      - name: build
+        run: |
+          cd td
+          rm -rf build
+          mkdir build
+          cd build
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=../tdlib ..
+          cmake --build . --target prepare_cross_compiling
+          cd ..
+          php SplitSource.php
+          cd build
+          cmake --build . --target install
+          cd ..
+          php SplitSource.php --undo
+
+#      - name: fake build
+#        run: |
+#          mkdir -p td/tdlib/lib
+#          echo test > td/tdlib/lib/libtdjson.so.1.8.4
+#          echo test > td/tdlib/lib/libtdjson.so
+#          rm td/tdlib/lib/libtdjson.so
+#          mv td/tdlib/lib/libtdjson.so.1.8.4 td/tdlib/lib/libtdjson.so
+
+      - name: zip
+        run: |
+          cd td/tdlib/lib
+          zip libtdjson.zip libtdjson.so
+
+      - name: Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: linux-x64-${{ env.td_version }}-${{ env.td_commit_hash }}
+          name: Linux x64 ${{ env.td_version }}-${{ env.td_commit_hash }}
+          body: https://github.com/tdlib/td/tree/${{ env.td_commit_hash }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: 'td/tdlib/lib/libtdjson.zip'
+
+  build-windows-x64:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: JSON to variables
+        uses: rgarcia-phi/json-to-variables@v1.1.0
+        with:
+          filename: '.github/workflows/td-version.json'
+          prefix: td
+
+      - name: clone
+        run: |
+          git clone https://github.com/tdlib/td.git
+          cd td
+          git checkout ${{ env.td_commit_hash }}
+          git show --summary
+
+      - name: setup vcpkg
+        run: |
+          cd td
+          git clone https://github.com/Microsoft/vcpkg.git
+          cd vcpkg
+          git checkout 1b1ae50e1a69f7c659bd7d731e80b358d21c86ad
+          ./bootstrap-vcpkg.bat
+          ./vcpkg.exe install gperf:x64-windows openssl:x64-windows zlib:x64-windows
+
+      - name: build
+        run: |
+          cd td
+          mkdir build
+          cd build
+          cmake -A x64 -DCMAKE_INSTALL_PREFIX:PATH=../tdlib -DCMAKE_TOOLCHAIN_FILE:FILEPATH=../vcpkg/scripts/buildsystems/vcpkg.cmake ..
+          cmake --build . --target install --config Release
+
+#      - name: fake build
+#        run: |
+#          mkdir -p td/tdlib/bin
+#          echo test > td/tdlib/bin/libcrypto-1_1-x64.dll
+#          echo test > td/tdlib/bin/libssl-1_1-x64.dll
+#          echo test > td/tdlib/bin/tdjson.dll
+#          echo test > td/tdlib/bin/zlib1.dll
+
+      - name: zip
+        run: |
+          cd td/tdlib/bin
+          ls
+          mv libcrypto-1_1-x64.dll libcrypto-1_1.dll
+          mv libssl-1_1-x64.dll libssl-1_1.dll
+          7z a -tzip dlls.zip libcrypto-1_1.dll libssl-1_1.dll tdjson.dll zlib1.dll
+
+      - name: Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: windows-x64-${{ env.td_version }}-${{ env.td_commit_hash }}
+          name: Windows x64 ${{ env.td_version }}-${{ env.td_commit_hash }}
+          body: https://github.com/tdlib/td/tree/${{ env.td_commit_hash }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: 'td/tdlib/bin/dlls.zip'
+
