@@ -305,7 +305,7 @@ jobs:
           cd td
           git clone https://github.com/Microsoft/vcpkg.git
           cd vcpkg
-          git checkout 1b1ae50e1a69f7c659bd7d731e80b358d21c86ad
+          git checkout c72cefb255ecc04f17d956ff12f9bd4b94111ca0
           ./bootstrap-vcpkg.bat
           ./vcpkg.exe install gperf:x64-windows openssl:x64-windows zlib:x64-windows
 
@@ -320,8 +320,8 @@ jobs:
 #      - name: fake build
 #        run: |
 #          mkdir -p td/tdlib/bin
-#          echo test > td/tdlib/bin/libcrypto-1_1-x64.dll
-#          echo test > td/tdlib/bin/libssl-1_1-x64.dll
+#          echo test > td/tdlib/bin/libcrypto-3-x64.dll
+#          echo test > td/tdlib/bin/libssl-3-x64.dll
 #          echo test > td/tdlib/bin/tdjson.dll
 #          echo test > td/tdlib/bin/zlib1.dll
 
@@ -329,8 +329,8 @@ jobs:
         run: |
           cd td/tdlib/bin
           ls
-          mv libcrypto-1_1-x64.dll libcrypto-1_1.dll
-          mv libssl-1_1-x64.dll libssl-1_1.dll
+          mv libcrypto-3-x64.dll libcrypto-1_1.dll
+          mv libssl-3-x64.dll libssl-1_1.dll
           7z a -tzip dlls.zip libcrypto-1_1.dll libssl-1_1.dll tdjson.dll zlib1.dll
 
       - name: Release
